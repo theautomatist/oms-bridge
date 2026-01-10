@@ -4,6 +4,7 @@
 ### System Overview
 ```mermaid
 flowchart LR
+  classDef api fill:#d1fae5,stroke:#10b981,stroke-width:1px,color:#065f46;
   METER[OMS meter]
   subgraph GATEWAY_S[<b>Gateway]
     direction LR
@@ -11,11 +12,15 @@ flowchart LR
   end
   METER -->|868MHz| CC1101
   subgraph BRIDGE_S[<b>Bridge]
-  ESP32 -->|Wi-Fi / REST| BRIDGE[Bridge Backend <br>FastAPI + Lobaro]
+    BRIDGE[Bridge Backend <br>FastAPI + Lobaro]
   end
-  BRIDGE -->|MQTT| STORE[Storage Telegraf + InfluxDB]
+  LOBARO[Lobaro API]
+  LOBARO <-->|REST API| BRIDGE
+  class LOBARO api;
+  ESP32 -->|Wi-Fi / REST| BRIDGE
+  BRIDGE -->|MQTT| STORE[Storage <br>Telegraf + InfluxDB]
   BRIDGE -->|MQTT| PROCESS_A[Real-time consumers]
-  STORE -->|DB| PROCESS_B[Dashboards + analytics]
+  STORE -->|DB| PROCESS_B[Dashboards + analytics <br>Grafana]
 ```
 
 ## Introduction
