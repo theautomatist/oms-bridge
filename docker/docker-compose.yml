@@ -1,0 +1,16 @@
+services:
+  oms-bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      LOG_LEVEL: DEBUG
+      LOBARO_TOKEN: ""
+      KEYS_DB_PATH: "/data/keys.db"
+    volumes:
+      - oms-keys:/data
+    ports:
+      - "8000:8000"
+
+volumes:
+  oms-keys:
