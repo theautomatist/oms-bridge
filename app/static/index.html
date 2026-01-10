@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OMS Bridge</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>OMS Bridge</h1>
+    </div>
+    <div class="top-right">
+      <button class="pill" id="theme-toggle" type="button">Dark</button>
+    </div>
+  </header>
+
+  <div id="toast" class="toast"></div>
+
+  <main>
+    <div id="lobaro-banner" class="status-card error banner hidden">
+      <div class="card-row">
+        <span class="icon" data-icon="cloud_off"></span>
+        <div>
+          <p class="label">Lobaro token missing</p>
+          <p class="value">Set LOBARO_TOKEN in Docker Compose and restart the container.</p>
+        </div>
+      </div>
+    </div>
+    <div class="status-bar">
+      <a class="status-card info" id="card-mqtt" href="#mqtt">
+        <div class="card-row">
+          <span class="icon" id="icon-mqtt" data-icon="cloud_off"></span>
+          <div>
+            <p class="label">MQTT</p>
+            <p class="value" id="card-mqtt-sub">Not configured</p>
+          </div>
+        </div>
+      </a>
+      <a class="status-card info" id="card-pending" href="#pending">
+        <div class="card-row">
+          <span class="icon" id="icon-pending" data-icon="sensors"></span>
+          <div>
+            <p class="label">New meters</p>
+            <p class="value" id="card-pending-sub">0 pending</p>
+          </div>
+        </div>
+      </a>
+      <a class="status-card ok" id="card-known" href="#known">
+        <div class="card-row">
+          <span class="icon" id="icon-known" data-icon="sensors"></span>
+          <div>
+            <p class="label">Known meters</p>
+            <p class="value" id="card-known-sub">0 meters</p>
+          </div>
+        </div>
+      </a>
+    </div>
+
+    <div class="grid">
+      <section class="card" id="mqtt">
+        <div class="card-head">
+          <h2>MQTT Configuration</h2>
+        </div>
+        <div class="card-body">
+          <form id="mqtt-form" class="column">
+            <div>
+              <label>URL</label>
+              <input type="text" name="url" placeholder="mqtt://broker:1883" required />
+            </div>
+            <div>
+              <label>Username</label>
+              <input type="text" name="username" placeholder="optional" />
+            </div>
+            <div>
+              <label>Password</label>
+              <input type="password" name="password" placeholder="leave empty to keep current" />
+            </div>
+            <div>
+              <label>Topic template</label>
+              <input type="text" name="topic_template" placeholder="oms/v1/gw/{gateway_id}/meter/{meter_id}/reading" required />
+            </div>
+            <div class="row">
+              <div>
+                <label>QoS</label>
+                <input type="number" name="qos" min="0" max="2" value="1" />
+              </div>
+              <div>
+                <label>Retain</label>
+                <select name="retain">
+                  <option value="false">false</option>
+                  <option value="true">true</option>
+                </select>
+              </div>
+            </div>
+            <div class="row" style="margin-top:8px;">
+              <button type="submit" class="primary">Save</button>
+              <button id="mqtt-test" class="accent" type="button">Test</button>
+              <button id="mqtt-send-test" class="accent" type="button">Send Test</button>
+            </div>
+            <p class="muted" id="mqtt-status" style="margin-top:6px;">Loading...</p>
+          </form>
+        </div>
+      </section>
+
+      <section class="card" id="pending">
+        <div class="card-head">
+          <h2>New meters</h2>
+          <button id="refresh-pending" class="accent" type="button">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div id="pending-list" class="list"></div>
+        </div>
+      </section>
+
+      <section class="card" id="known">
+        <div class="card-head">
+          <h2>Known meters</h2>
+          <button id="refresh-known" class="accent" type="button">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div id="known-list" class="list"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div id="key-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" data-close="key"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Add key</h3>
+        <button class="icon-btn close-btn" data-close="key" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body column">
+        <p class="muted">Meter ID: <span id="key-meter-id"></span></p>
+        <div>
+          <label>Key (HEX)</label>
+          <input id="key-input" type="text" placeholder="32 hex chars" minlength="32" maxlength="32" pattern="[0-9a-fA-F]{32}" required />
+        </div>
+        <p id="key-error" class="error-text hidden">Key must be 32 hex characters.</p>
+        <div class="row" style="margin-top:10px;">
+          <button id="key-save" class="primary" type="button">Save key</button>
+          <button id="key-cancel" class="accent" type="button" data-close="key">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="telegrams-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" data-close="telegrams"></div>
+    <div class="modal-content modal-wide">
+      <div class="modal-header">
+        <div>
+          <h3>Recent telegrams</h3>
+          <p class="muted">Meter ID: <span id="telegrams-meter-id"></span></p>
+        </div>
+        <button class="icon-btn close-btn" data-close="telegrams" aria-label="Close">×</button>
+      </div>
+      <div class="modal-grid">
+        <div>
+          <p class="muted" style="margin: 0 0 6px;">Click a telegram to view details (latest is auto-selected).</p>
+          <div id="telegrams-list" class="list"></div>
+        </div>
+        <div class="column">
+          <div>
+            <p class="section-title">Input</p>
+            <pre id="telegram-input" class="code-block">Select a telegram to view details.</pre>
+          </div>
+          <div>
+            <p class="section-title">Parsed</p>
+            <pre id="telegram-parsed" class="code-block">Select a telegram to view details.</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
