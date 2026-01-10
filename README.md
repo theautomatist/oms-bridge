@@ -30,7 +30,7 @@ This repository contains the backend for the OMS bridge shown above. The FastAPI
 Minimal FastAPI service for wM-Bus/OMS telegrams.
 
 - REST endpoint receives gateway telegrams.
-- Telegrams are sent to the Lobaro API.
+- Telegrams are sent to the [Lobaro API](https://confluence.lobaro.com/display/PUB/wMbus+Parser).
 - Successful decoding is published via MQTT.
 - Static Web UI stores keys and MQTT config in SQLite.
 
