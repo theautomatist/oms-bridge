@@ -65,6 +65,10 @@ class MqttConfigResponse(BaseModel):
     retain: bool
     password_set: bool
     configured: bool
+    locked_url: bool
+    locked_username: bool
+    locked_password: bool
+    locked_topic: bool
 
 
 class KeyPayload(BaseModel):
