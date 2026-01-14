@@ -81,19 +81,12 @@ Required:
 
 Optional:
 
+- `LOBARO_BASE_URL=https://platform.lobaro.com`
 - `LOBARO_TIMEOUT_S=10`
 - `KEYS_DB_PATH=./keys.db`
 - `LOG_LEVEL=DEBUG`
-- `MQTT_URL=mqtt://broker:1883`
-- `MQTT_USERNAME=...`
-- `MQTT_PASSWORD=...`
-- `MQTT_TOPIC_TEMPLATE=oms/v1/gw/{gateway_id}/meter/{meter_id}/reading`
-- `MQTT_QOS=1`
-- `MQTT_RETAIN=false`
 
 Keys and MQTT config persist if `KEYS_DB_PATH` points to a mounted volume.
-
-MQTT can be configured either via the Web UI or environment variables. If the database has no MQTT config yet, the service will bootstrap it from env on first start.
 
 ## REST: receive telegrams
 

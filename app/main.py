@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from app.clients import (
     LobaroClient,
     LobaroConfig,
-    LobaroResponseError,
     MqttConnectError,
     MqttNotConfigured,
     MqttPublishError,
@@ -32,7 +31,6 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
-LOBARO_BASE_URL = "https://platform.lobaro.com"
 DEFAULT_MQTT_URL = "mqtt://localhost:1883"
 DEFAULT_MQTT_TOPIC = "oms/v1/gw/{gateway_id}/meter/{meter_id}/reading"
 DEFAULT_MQTT_QOS = 1
@@ -57,35 +55,11 @@ def _configure_logging() -> None:
         logging.getLogger(name).setLevel(level)
 
 
-def _normalize_mqtt_url(value: str | None) -> str | None:
-    if value is None:
-        return None
-    trimmed = value.strip()
-    if not trimmed:
-        return ""
-    if "://" not in trimmed:
-        return f"mqtt://{trimmed}"
-    return trimmed
-
-
 def create_app() -> FastAPI:
     _configure_logging()
     settings = get_settings()
 
     app = FastAPI(title="OMS Parser Bridge")
-
-    raw_mqtt_url = (settings.mqtt_url or "")
-    lock_url = bool(raw_mqtt_url.strip())
-    lock_username = bool((settings.mqtt_username or "").strip())
-    lock_password = bool((settings.mqtt_password or "").strip())
-    lock_topic = bool((settings.mqtt_topic_template or "").strip())
-    app.state.mqtt_env_locks = {
-        "url": lock_url,
-        "username": lock_username,
-        "password": lock_password,
-        "topic": lock_topic,
-    }
-    app.state.mqtt_source = "none"
 
     app.state.mqtt = MqttPublisher(
         MqttRuntimeConfig(
@@ -101,7 +75,7 @@ def create_app() -> FastAPI:
     app.state.store = SqliteStore(settings.keys_db_path)
     app.state.lobaro = LobaroClient(
         LobaroConfig(
-            base_url=LOBARO_BASE_URL,
+            base_url=settings.lobaro_base_url,
             token=settings.lobaro_token,
             timeout_s=settings.lobaro_timeout_s,
         )
@@ -139,55 +113,11 @@ def create_app() -> FastAPI:
     async def on_startup() -> None:
         await app.state.store.init()
         stored = await app.state.store.get_mqtt_config()
-        mqtt_url = _normalize_mqtt_url(raw_mqtt_url) or ""
-        mqtt_user = (settings.mqtt_username or "").strip() or None
-        mqtt_pass = (settings.mqtt_password or "").strip() or None
-        env_topic = (settings.mqtt_topic_template or "").strip() or None
-
         if stored:
-            stored_url = _normalize_mqtt_url(stored.url) or stored.url
-            merged = MqttRuntimeConfig(
-                url=mqtt_url if lock_url else stored_url,
-                username=mqtt_user if lock_username else stored.username,
-                password=mqtt_pass if lock_password else stored.password,
-                topic_template=env_topic if lock_topic else stored.topic_template,
-                qos=stored.qos,
-                retain=stored.retain,
-            )
-            await app.state.mqtt.update_config(merged)
-            if lock_url or lock_username or lock_password:
-                await app.state.store.set_mqtt_config(merged)
-                app.state.mqtt_source = "db+env"
-                logger.info("mqtt_config_merged_with_env")
-            else:
-                app.state.mqtt_source = "db"
-        elif mqtt_url:
-            env_config = MqttRuntimeConfig(
-                url=mqtt_url,
-                username=mqtt_user,
-                password=mqtt_pass,
-                topic_template=env_topic or DEFAULT_MQTT_TOPIC,
-                qos=settings.mqtt_qos,
-                retain=settings.mqtt_retain,
-            )
-            await app.state.mqtt.update_config(env_config)
-            await app.state.store.set_mqtt_config(env_config)
-            app.state.mqtt_source = "env"
-            logger.info("mqtt_config_loaded_from_env")
-        else:
-            app.state.mqtt_source = "none"
+            await app.state.mqtt.update_config(stored)
         if not app.state.lobaro.has_token:
             logger.warning("lobaro_token_missing")
-        logger.info(
-            "store_initialized",
-            extra={
-                "db_path": settings.keys_db_path,
-                "mqtt_source": app.state.mqtt_source,
-                "mqtt_configured": app.state.mqtt.configured,
-                "mqtt_url": app.state.mqtt.config.url if app.state.mqtt.configured else "",
-                "mqtt_topic": app.state.mqtt.config.topic_template if app.state.mqtt.configured else "",
-            },
-        )
+        logger.info("store_initialized", extra={"db_path": settings.keys_db_path})
 
     @app.get("/api/mqtt", response_model=MqttConfigResponse)
     async def get_mqtt_config() -> MqttConfigResponse:
@@ -195,13 +125,9 @@ def create_app() -> FastAPI:
         if stored:
             config = stored
             configured = True
-        elif app.state.mqtt.configured:
-            config = app.state.mqtt.config
-            configured = True
         else:
             config = app.state.mqtt.config
             configured = False
-        locks = app.state.mqtt_env_locks
         return MqttConfigResponse(
             url=config.url,
             username=config.username,
@@ -210,31 +136,16 @@ def create_app() -> FastAPI:
             retain=config.retain,
             password_set=bool(config.password) if configured else False,
             configured=configured,
-            locked_url=locks["url"],
-            locked_username=locks["username"],
-            locked_password=locks["password"],
-            locked_topic=locks["topic"],
         )
 
     @app.put("/api/mqtt", response_model=MqttConfigResponse)
     async def update_mqtt_config(payload: MqttConfigPayload) -> MqttConfigResponse:
         current = app.state.mqtt.config
-        locks = app.state.mqtt_env_locks
-        normalized_url = _normalize_mqtt_url(payload.url) or payload.url
-        if locks["url"] and payload.url != current.url:
-            raise HTTPException(status_code=400, detail="mqtt_url_locked")
-        if locks["username"] and payload.username != current.username:
-            raise HTTPException(status_code=400, detail="mqtt_username_locked")
-        if locks["topic"] and payload.topic_template != current.topic_template:
-            raise HTTPException(status_code=400, detail="mqtt_topic_locked")
-        if locks["password"]:
-            if payload.password and payload.password != current.password:
-                raise HTTPException(status_code=400, detail="mqtt_password_locked")
         password = payload.password
         if password is None or password == "":
             password = current.password
         new_config = MqttRuntimeConfig(
-            url=normalized_url,
+            url=payload.url,
             username=payload.username,
             password=password,
             topic_template=payload.topic_template,
@@ -251,10 +162,6 @@ def create_app() -> FastAPI:
             retain=new_config.retain,
             password_set=bool(new_config.password),
             configured=True,
-            locked_url=locks["url"],
-            locked_username=locks["username"],
-            locked_password=locks["password"],
-            locked_topic=locks["topic"],
         )
 
     @app.post("/api/mqtt/test")
@@ -264,11 +171,8 @@ def create_app() -> FastAPI:
         except MqttNotConfigured as exc:
             raise HTTPException(status_code=400, detail="mqtt_not_configured") from exc
         except MqttConnectError as exc:
-            logger.warning(
-                "mqtt_connect_failed",
-                extra={"error": str(exc), "mqtt_url": app.state.mqtt.config.url},
-            )
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            logger.warning("mqtt_connect_failed", extra={"error": str(exc)})
+            raise HTTPException(status_code=502, detail="mqtt_connect_failed") from exc
         return {"ok": True, "connected": app.state.mqtt.connected}
 
     @app.post("/api/mqtt/test-message")
@@ -288,11 +192,8 @@ def create_app() -> FastAPI:
         try:
             await safe_publish(app.state.mqtt, topic, payload)
         except MqttPublishError as exc:
-            logger.warning(
-                "mqtt_test_publish_failed",
-                extra={"error": str(exc), "mqtt_url": app.state.mqtt.config.url},
-            )
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            logger.warning("mqtt_test_publish_failed", exc_info=exc)
+            raise HTTPException(status_code=502, detail="mqtt_error") from exc
         return {"ok": True, "topic": topic}
 
     @app.get("/api/keys")
@@ -342,6 +243,9 @@ def create_app() -> FastAPI:
 
     @app.post("/v1/telegrams", response_model=IngestResponse)
     async def ingest(payload: IngestTelegramRequest, response: Response) -> IngestResponse:
+        if not app.state.mqtt.configured:
+            logger.warning("mqtt_not_configured", extra={"gateway_id": payload.gateway or "unknown"})
+            raise HTTPException(status_code=400, detail="mqtt_not_configured")
         meter_id = payload.id
         gateway_id = payload.gateway or "unknown"
         input_payload = payload.model_dump(mode="json")
@@ -357,29 +261,15 @@ def create_app() -> FastAPI:
                 "payload_len": payload.payload_len,
             },
         )
-        try:
-            key_hex = await app.state.store.get_key(meter_id)
-        except Exception as exc:
-            logger.exception(
-                "store_get_key_failed",
-                extra={"gateway_id": gateway_id, "meter_id": meter_id, "error": str(exc)},
-            )
-            response.status_code = 202
-            return IngestResponse(status="store_error", meter_id=meter_id, mqtt_topic=None)
+        key_hex = await app.state.store.get_key(meter_id)
         if not key_hex:
-            try:
-                await app.state.store.mark_pending_meter(
-                    meter_id=meter_id,
-                    manuf=payload.manuf,
-                    dev_type=payload.dev_type,
-                    version=payload.version,
-                    ci=payload.ci,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "store_mark_pending_failed",
-                    extra={"gateway_id": gateway_id, "meter_id": meter_id, "error": str(exc)},
-                )
+            await app.state.store.mark_pending_meter(
+                meter_id=meter_id,
+                manuf=payload.manuf,
+                dev_type=payload.dev_type,
+                version=payload.version,
+                ci=payload.ci,
+            )
             try:
                 await app.state.store.add_telegram(meter_id, gateway_id, "pending_key", input_payload, None)
             except Exception as exc:
@@ -396,41 +286,15 @@ def create_app() -> FastAPI:
                 await app.state.store.add_telegram(meter_id, gateway_id, "lobaro_token_missing", input_payload, None)
             except Exception as store_exc:
                 logger.warning("store_add_telegram_failed", extra={"error": str(store_exc)})
-            response.status_code = 202
-            return IngestResponse(status="lobaro_token_missing", meter_id=meter_id, mqtt_topic=None)
+            raise HTTPException(status_code=503, detail="lobaro_token_missing")
 
         try:
             rx_time = payload.rx_time or datetime.now(timezone.utc)
 
             try:
                 parsed = await app.state.lobaro.parse_meter_data(payload.logical_hex, key_hex)
-            except LobaroResponseError as exc:
-                body_preview = exc.body[:500] if exc.body else ""
-                logger.warning(
-                    "lobaro_parse_failed",
-                    extra={
-                        "gateway_id": gateway_id,
-                        "meter_id": meter_id,
-                        "status_code": exc.status_code,
-                        "body_preview": body_preview,
-                    },
-                )
-                try:
-                    await app.state.store.add_telegram(meter_id, gateway_id, "lobaro_error", input_payload, None)
-                except Exception as store_exc:
-                    logger.warning("store_add_telegram_failed", extra={"error": str(store_exc)})
-                logger.info(
-                    "telegram_lobaro_error",
-                    extra={"gateway_id": gateway_id, "meter_id": meter_id},
-                )
-                response.status_code = 202
-                return IngestResponse(status="lobaro_error", meter_id=meter_id, mqtt_topic=None)
             except Exception as exc:
-                logger.warning(
-                    "lobaro_parse_failed",
-                    exc_info=exc,
-                    extra={"gateway_id": gateway_id, "meter_id": meter_id},
-                )
+                logger.warning("lobaro_parse_failed", exc_info=exc)
                 try:
                     await app.state.store.add_telegram(meter_id, gateway_id, "lobaro_error", input_payload, None)
                 except Exception as store_exc:
@@ -439,25 +303,9 @@ def create_app() -> FastAPI:
                     "telegram_lobaro_error",
                     extra={"gateway_id": gateway_id, "meter_id": meter_id},
                 )
-                response.status_code = 202
-                return IngestResponse(status="lobaro_error", meter_id=meter_id, mqtt_topic=None)
+                raise HTTPException(status_code=502, detail="lobaro_error") from exc
 
             resolved_meter_id = parsed.get("meterId") or meter_id or "unknown"
-            if not app.state.mqtt.configured:
-                logger.warning(
-                    "mqtt_not_configured",
-                    extra={
-                        "gateway_id": gateway_id,
-                        "meter_id": meter_id,
-                        "mqtt_source": app.state.mqtt_source,
-                    },
-                )
-                try:
-                    await app.state.store.add_telegram(meter_id, gateway_id, "mqtt_not_configured", input_payload, parsed)
-                except Exception as store_exc:
-                    logger.warning("store_add_telegram_failed", extra={"error": str(store_exc)})
-                response.status_code = 202
-                return IngestResponse(status="mqtt_not_configured", meter_id=resolved_meter_id, mqtt_topic=None)
             topic = app.state.mqtt.config.topic_template.format(
                 gateway_id=gateway_id,
                 meter_id=resolved_meter_id,
@@ -513,8 +361,7 @@ def create_app() -> FastAPI:
                 await app.state.store.add_telegram(meter_id, gateway_id, "ingest_error", input_payload, None)
             except Exception as store_exc:
                 logger.warning("store_add_telegram_failed", extra={"error": str(store_exc)})
-            response.status_code = 202
-            return IngestResponse(status="ingest_error", meter_id=meter_id, mqtt_topic=None)
+            raise
 
     @app.get("/v1/telegrams")
     async def ingest_status() -> dict:

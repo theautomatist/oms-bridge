@@ -3,8 +3,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    env_file:
-      - ../.env
+    environment:
+      LOG_LEVEL: DEBUG
+      LOBARO_TOKEN: ""
+      KEYS_DB_PATH: "/data/keys.db"
     volumes:
       - oms-keys:/data
     ports:

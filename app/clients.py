@@ -36,12 +36,12 @@ class LobaroClient:
             "Accept": "application/json",
         }
         response = await self._client.post(
-            "/api/mbus",
+            "/api/meterData",
             params=params,
             headers=headers,
+            json={"domainMappings": []},
         )
-        if response.status_code >= 400:
-            raise LobaroResponseError(response.status_code, response.text)
+        response.raise_for_status()
         return response.json()
 
 
@@ -99,7 +99,7 @@ class MqttPublisher:
                 self._last_ok = True
             except MqttError as exc:
                 self._last_ok = False
-                raise MqttConnectError(f"{exc} (url={self._config.url})") from exc
+                raise MqttConnectError(str(exc)) from exc
 
     async def publish_json(self, topic: str, payload: dict) -> None:
         data = json.dumps(payload, separators=(",", ":"))
@@ -115,7 +115,7 @@ class MqttPublisher:
                 self._last_ok = True
             except MqttError as exc:
                 self._last_ok = False
-                raise MqttPublishError(f"{exc} (url={self._config.url})") from exc
+                raise MqttPublishError(str(exc)) from exc
 
 
 class MqttPublishError(Exception):
@@ -128,13 +128,6 @@ class MqttConnectError(Exception):
 
 class MqttNotConfigured(Exception):
     pass
-
-
-class LobaroResponseError(Exception):
-    def __init__(self, status_code: int, body: str) -> None:
-        super().__init__(f"lobaro_http_{status_code}")
-        self.status_code = status_code
-        self.body = body
 
 
 async def safe_publish(publisher: MqttPublisher, topic: str, payload: dict) -> None:
