@@ -1,0 +1,93 @@
+services:
+  oms-bridge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      LOBARO_TOKEN: ""
+      LOBARO_TIMEOUT_S: "10"
+      MQTT_URL: "mqtt://mosquitto:1883"
+      MQTT_USERNAME: "oms"
+      MQTT_PASSWORD: "oms"
+      MQTT_TOPIC_TEMPLATE: "oms/v1/gw/{gateway_id}/meter/{meter_id}/reading"
+      MQTT_QOS: "1"
+      MQTT_RETAIN: "false"
+      KEYS_DB_PATH: "/data/keys.db"
+      LOG_LEVEL: "INFO"
+    volumes:
+      - oms-keys:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      mosquitto:
+        condition: service_started
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto-data:/mosquitto/data
+    depends_on:
+      mosquitto-init:
+        condition: service_completed_successfully
+
+  mosquitto-init:
+    image: eclipse-mosquitto:2
+    user: "0"
+    environment:
+      MOSQUITTO_USER: "oms"
+      MOSQUITTO_PASSWORD: "oms"
+    entrypoint: >
+      sh -c "if [ ! -f /mosquitto/data/passwords ]; then
+               mosquitto_passwd -b -c /mosquitto/data/passwords \"$${MOSQUITTO_USER}\" \"$${MOSQUITTO_PASSWORD}\";
+             fi"
+    volumes:
+      - mosquitto-data:/mosquitto/data
+
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: "setup"
+      DOCKER_INFLUXDB_INIT_USERNAME: "oms"
+      DOCKER_INFLUXDB_INIT_PASSWORD: "oms-password"
+      DOCKER_INFLUXDB_INIT_ORG: "oms"
+      DOCKER_INFLUXDB_INIT_BUCKET: "oms"
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: "oms-token"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+
+  telegraf:
+    image: telegraf:1.29
+    depends_on:
+      - mosquitto
+      - influxdb
+    environment:
+      MQTT_USERNAME: "oms"
+      MQTT_PASSWORD: "oms"
+      INFLUX_ORG: "oms"
+      INFLUX_BUCKET: "oms"
+      INFLUX_TOKEN: "oms-token"
+    volumes:
+      - ./telegraf.conf:/etc/telegraf/telegraf.conf:ro
+
+  grafana:
+    image: grafana/grafana:10.4.3
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: "admin"
+      GF_SECURITY_ADMIN_PASSWORD: "admin"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  oms-keys:
+  mosquitto-data:
+  influxdb-data:
+  grafana-data:

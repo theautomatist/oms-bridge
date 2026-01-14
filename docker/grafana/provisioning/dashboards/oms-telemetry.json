@@ -1,0 +1,77 @@
+{
+  "id": null,
+  "uid": "oms-default",
+  "title": "OMS Temperature",
+  "tags": ["oms"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Temperature",
+      "datasource": {
+        "type": "influxdb",
+        "uid": "oms-influx"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "flux",
+          "datasource": {
+            "type": "influxdb",
+            "uid": "oms-influx"
+          },
+          "query": "from(bucket: \"oms\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r[\"_measurement\"] == \"oms_telegrams\")\n  |> filter(fn: (r) => r[\"gateway_id\"] == \"OMS-Gateway-BCFC94\")\n  |> filter(fn: (r) => r[\"host\"] == \"7a983c579bf6\")\n  |> filter(fn: (r) => r[\"meter_id\"] == \"01119360\")\n  |> filter(fn: (r) => r[\"topic\"] == \"oms/v1/gw/OMS-Gateway-BCFC94/meter/01119360/reading\")\n  |> filter(fn: (r) => r[\"_field\"] == \"lobaro_Body_DataRecords_4_ValueScaled\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> yield(name: \"mean\")"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    }
+  ]
+}

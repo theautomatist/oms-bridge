@@ -49,8 +49,17 @@ const fetchJson = async (url, options = {}) => {
     ...options,
   });
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || response.statusText);
+    const raw = await response.text();
+    let message = raw || response.statusText;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.detail) {
+        message = parsed.detail;
+      }
+    } catch (err) {
+      // Fall back to raw text.
+    }
+    throw new Error(message);
   }
   return response.json();
 };
@@ -164,6 +173,15 @@ const loadMqtt = async () => {
     mqttForm.retain.value = data.retain ? "true" : "false";
     mqttForm.password.value = "";
     mqttConfigured = data.configured;
+    const lockHint = "Managed by environment. Edit the env file to change.";
+    mqttForm.url.disabled = data.locked_url;
+    mqttForm.username.disabled = data.locked_username;
+    mqttForm.password.disabled = data.locked_password;
+    mqttForm.topic_template.disabled = data.locked_topic;
+    mqttForm.url.title = data.locked_url ? lockHint : "";
+    mqttForm.username.title = data.locked_username ? lockHint : "";
+    mqttForm.password.title = data.locked_password ? lockHint : "";
+    mqttForm.topic_template.title = data.locked_topic ? lockHint : "";
     if (!data.configured) {
       mqttStatus.textContent = "Not configured";
     } else if (data.password_set) {
@@ -215,7 +233,7 @@ const testMqtt = async () => {
   } catch (err) {
     mqttConnected = false;
     updateStatusCards();
-    toast("MQTT not reachable", "error");
+    toast(`MQTT not reachable (${err.message})`, "error");
   }
 };
 
@@ -226,7 +244,7 @@ const sendTestMessage = async () => {
     mqttStatus.textContent = `Test sent to ${data.topic}`;
     toast("MQTT test sent", "success");
   } catch (err) {
-    toast("MQTT test failed", "error");
+    toast(`MQTT test failed (${err.message})`, "error");
   }
 };
 

@@ -1,0 +1,16 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    uid: oms-influx
+    type: influxdb
+    access: proxy
+    orgId: 1
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: oms
+      defaultBucket: oms
+    secureJsonData:
+      token: oms-token
