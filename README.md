@@ -3,24 +3,56 @@
 
 ### System Overview
 ```mermaid
-flowchart LR
-  classDef api fill:#d1fae5,stroke:#10b981,stroke-width:1px,color:#065f46;
-  METER[OMS meter]
-  subgraph GATEWAY_S[<b>Gateway]
+flowchart TB
+  classDef device fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0f172a;
+  classDef service fill:#ecfccb,stroke:#65a30d,stroke-width:1px,color:#365314;
+  classDef storage fill:#fee2e2,stroke:#ef4444,stroke-width:1px,color:#7f1d1d;
+  classDef ui fill:#fef9c3,stroke:#eab308,stroke-width:1px,color:#713f12;
+LOBARO[Lobaro API<br/>/api/mbus]:::service
+  subgraph METER_S["<span style='font-size:18px'><b>Meter</b></span>"]
     direction LR
-    CC1101[CC1101 sub-GHz] <-->|SPI| ESP32[ESP32-C3 Wi-Fi]
+    SENSOR[Meter sensor]:::device
+    METER[OMS meter MCU]:::device
   end
-  METER -->|868MHz| CC1101
-  subgraph BRIDGE_S[<b>Bridge]
-    BRIDGE[Bridge Backend <br>FastAPI + Lobaro]
+
+  subgraph GATEWAY_S["<span style='font-size:18px'><b>Gateway</b></span>"]
+    direction LR
+    CC1101[CC1101 sub-GHz]:::device
+    ESP32[ESP32-C3 Wi-Fi]:::device
   end
-  LOBARO[Lobaro API]
-  LOBARO <-->|REST API| BRIDGE
-  class LOBARO api;
-  ESP32 -->|Wi-Fi / REST| BRIDGE
-  BRIDGE -->|MQTT| STORE[Storage <br>Telegraf + InfluxDB]
-  BRIDGE -->|MQTT| PROCESS_A[Real-time consumers]
-  STORE -->|DB| PROCESS_B[Dashboards + analytics <br>Grafana]
+
+  subgraph BRIDGE_S["<span style='font-size:18px'><b>Bridge</b></span>"]
+    direction TB
+    BRIDGE[FastAPI + Web UI]:::service
+    SQLITE[(SQLite<br/>keys + telegrams + mqtt config)]:::storage
+  end
+
+  subgraph STACK_S["<span style='font-size:18px'><b>MQTT + Storage + Dashboards</b></span>"]
+    direction TB
+    MQTT[(Mosquitto MQTT)]:::service
+    TELEGRAF[Telegraf MQTT consumer]:::service
+    INFLUX[(InfluxDB v2)]:::storage
+    GRAFANA[Grafana dashboards]:::ui
+  end
+
+  USER[User browser]:::ui
+  
+
+  SENSOR --> METER -->|wM-Bus| CC1101 -->|SPI| ESP32
+  ESP32 -->|REST /v1/telegrams| BRIDGE
+  BRIDGE --> SQLITE
+  BRIDGE -->|REST decode| LOBARO
+  LOBARO --> BRIDGE
+  BRIDGE -->|MQTT publish| MQTT
+  MQTT --> TELEGRAF --> INFLUX --> GRAFANA
+  USER -->|Web UI| BRIDGE
+  USER -->|Gateway config UI| ESP32
+  USER -->|Dashboards| GRAFANA
+
+  style METER_S fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0f172a;
+  style GATEWAY_S fill:#e9d5ff,stroke:#7c3aed,stroke-width:1px,color:#3b0764;
+  style BRIDGE_S fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d;
+  style STACK_S fill:#ffe4e6,stroke:#fb7185,stroke-width:1px,color:#881337;
 ```
 
 ## Introduction
@@ -34,6 +66,75 @@ Minimal FastAPI service for wM-Bus/OMS telegrams.
 - Successful decoding is published via MQTT.
 - Static Web UI stores keys and MQTT config in SQLite.
 
+## Components
+
+- OMS meter + sensor: emits wM-Bus frames over 868MHz.
+- Gateway (CC1101 + ESP32-C3): receives frames, posts JSON to `/v1/telegrams`, and exposes a browser UI for gateway configuration.
+- OMS Bridge (FastAPI): validates input, resolves keys, calls Lobaro, publishes MQTT.
+- Web UI: manages meter keys, MQTT config, and shows recent telegrams.
+- SQLite: persists keys, pending meters, MQTT config, and telegram history.
+- Mosquitto: MQTT broker for decoded telegram payloads.
+- Telegraf: subscribes to MQTT topics and writes metrics to InfluxDB.
+- InfluxDB: time-series storage for decoded measurements.
+- Grafana: dashboards for visualization on the PC/browser.
+
+## Dataflow (End-to-End)
+
+```mermaid
+flowchart TB
+  classDef device fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0f172a;
+  classDef service fill:#ecfccb,stroke:#65a30d,stroke-width:1px,color:#365314;
+  classDef storage fill:#fee2e2,stroke:#ef4444,stroke-width:1px,color:#7f1d1d;
+  classDef ui fill:#fef9c3,stroke:#eab308,stroke-width:1px,color:#713f12;
+LOBARO[Lobaro API /api/mbus]:::service
+  subgraph METER_S["<span style='font-size:18px'><b>Meter</b></span>"]
+    direction LR
+    SENSOR[Sensor]:::device
+    METER[OMS meter MCU]:::device
+  end
+
+  subgraph GATEWAY_S["<span style='font-size:18px'><b>Gateway</b></span>"]
+    direction LR
+    CC1101[CC1101]:::device
+    ESP32[ESP32-C3]:::device
+  end
+
+  subgraph BRIDGE_S["<span style='font-size:18px'><b>Bridge</b></span>"]
+    direction TB
+    BRIDGE[OMS Bridge]:::service
+    SQLITE[(SQLite)]:::storage
+  end
+
+  subgraph STACK_S["<span style='font-size:18px'><b>MQTT + Storage + Dashboards</b></span>"]
+    direction TB
+    MQTT[(Mosquitto)]:::service
+    TELEGRAF[Telegraf]:::service
+    INFLUX[(InfluxDB)]:::storage
+    GRAFANA[Grafana]:::ui
+  end
+
+  USER[PC Browser]:::ui
+  
+
+  SENSOR --> METER -->|wM-Bus frame| CC1101 -->|SPI| ESP32
+  ESP32 -->|HTTP POST /v1/telegrams| BRIDGE
+  BRIDGE -->|lookup key + config| SQLITE
+  BRIDGE -->|decode raw telegram| LOBARO
+  LOBARO -->|decoded JSON| BRIDGE
+  BRIDGE -->|MQTT publish| MQTT
+  MQTT -->|MQTT subscribe| TELEGRAF
+  TELEGRAF -->|write points| INFLUX
+  INFLUX -->|Flux query| GRAFANA
+  USER -->|configure keys + MQTT| BRIDGE
+  USER -->|view dashboard| GRAFANA
+  USER -->|configure gateway| ESP32
+
+  style METER_S fill:#e0f2fe,stroke:#0284c7,stroke-width:1px,color:#0f172a;
+  style GATEWAY_S fill:#e9d5ff,stroke:#7c3aed,stroke-width:1px,color:#3b0764;
+  style BRIDGE_S fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d;
+  style STACK_S fill:#ffe4e6,stroke:#fb7185,stroke-width:1px,color:#881337;
+```
+
 ## Run with Docker
 
 ```bash
@@ -42,6 +143,26 @@ docker compose -f docker/docker-compose.yml up --build
 
 Web UI: `http://localhost:8000/ui/`
 Health: `http://localhost:8000/healthz`
+
+## Full Stack (MQTT + InfluxDB + Grafana)
+
+```bash
+docker compose -f docker/docker-compose.full.yml up --build
+```
+
+Services included:
+
+- `oms-bridge` (FastAPI + Web UI)
+- `mosquitto` (MQTT broker)
+- `telegraf` (MQTT -> InfluxDB)
+- `influxdb` (time-series storage)
+- `grafana` (dashboards)
+
+Grafana: `http://localhost:3000/` (admin/admin by default)
+InfluxDB: `http://localhost:8086/`
+
+Grafana is provisioned with an InfluxDB datasource and a starter dashboard under `docker/grafana/`.
+Mosquitto and Telegraf use `docker/mosquitto.conf` and `docker/telegraf.conf`.
 
 ## Example docker-compose.yml
 
@@ -153,4 +274,4 @@ Known meters show the forwarded telegram count. Clicking a meter opens a minimal
 | ![Telegram details](img/telegram_token_missing.png) |
 | Telegram details (token missing example) |
 
-MQTT configuration is managed only via the Web UI (not via environment variables).
+MQTT configuration can be managed in the Web UI or provided via environment variables. If env values are set, the UI will show them as locked.
